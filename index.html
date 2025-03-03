@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyberpunk Asteroids</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pyodide/0.24.1/pyodide.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background: #0a0a0a;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            border: 2px solid #0ff;
+            box-shadow: 0 0 20px #0ff;
+        }
+        .neon-text {
+            text-shadow: 0 0 5px #0ff, 0 0 10px #0ff, 0 0 15px #0ff;
+            color: #0ff;
+        }
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading::after {
+            content: '';
+            width: 50px;
+            height: 50px;
+            border: 5px solid #0ff;
+            border-top: 5px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+    <div id="loading" class="loading"></div>
+    <h1 class="text-4xl md:text-6xl mb-8 neon-text">CYBERPUNK ASTEROIDS</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="mt-4 text-cyan-400">
+        <p class="text-xl">Controls: Arrow keys to move, Space to shoot</p>
+        <p class="mt-2">Score: <span id="score" class="neon-text">0</span></p>
+        <button id="startBtn" class="mt-4 px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors duration-300 shadow-lg shadow-cyan-500/50">
+            Start Game
+        </button>
+    </div>
+
+    <script>
+        async function initPyodide() {
+            let pyodide = await loadPyodide();
+            const pythonCode = `
+import math
+import random
+import json
+from js import document, window, console
+import javascript
+
+class GameObject:
+    def __init__(self, x, y, size):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.dx = 0
+        self.dy = 0
+
+    def move(self, canvas_width, canvas_height):
+        self.x = (self.x + self.dx) % canvas_width
+        self.y = (self.y + self.dy) % canvas_height
+
+class Ship(GameObject):
+    def __init__(self, x, y):
+        super().__init__(x, y, 20)
+        self.rotation = 0
+        self.thrusting = False
+
+    def rotate(self, dir):
+        self.rotation += dir * 5
+
+    def thrust(self, on):
+        self.thrusting = on
+        if on:
+            self.dx += math.cos(math.radians(self.rotation)) * 0.5
+            self.dy -= math.sin(math.radians(self.rotation)) * 0.5
+        # Add friction
+        self.dx *= 0.99
+        self.dy *= 0.99
+
+class Bullet(GameObject):
+    def __init__(self, x, y, rotation):
+        super().__init__(x, y, 2)
+        self.dx = math.cos(math.radians(rotation)) * 10
+        self.dy = -math.sin(math.radians(rotation)) * 10
+        self.life = 50
+
+class Asteroid(GameObject):
+    def __init__(self, x, y, size):
+        super().__init__(x, y, size)
+        speed = random.random() * 2 + 1
+        angle = random.random() * 360
+        self.dx = math.cos(math.radians(angle)) * speed
+        self.dy = math.sin(math.radians(angle)) * speed
+
+class Game:
+    def __init__(self):
+        self.ship = Ship(400, 300)
+        self.bullets = []
+        self.asteroids = []
+        self.score = 0
+        self.game_over = False
+        for _ in range(5):
+            self.spawn_asteroid()
+
+    def spawn_asteroid(self):
+        side = random.randint(0, 3)
+        if side == 0:  # Top
+            x = random.randint(0, 800)
+            y = -50
+        elif side == 1:  # Right
+            x = 850
+            y = random.randint(0, 600)
+        elif side == 2:  # Bottom
+            x = random.randint(0, 800)
+            y = 650
+        else:  # Left
+            x = -50
+            y = random.randint(0, 600)
+        self.asteroids.append(Asteroid(x, y, 40))
+
+    def update(self):
+        if self.game_over:
+            return
+
+        self.ship.move(800, 600)
+
+        for bullet in self.bullets[:]:
+            bullet.move(800, 600)
+            bullet.life -= 1
+            if bullet.life <= 0:
+                self.bullets.remove(bullet)
+
+        for asteroid in self.asteroids[:]:
+            asteroid.move(800, 600)
+            
+            # Check collision with ship
+            dx = self.ship.x - asteroid.x
+            dy = self.ship.y - asteroid.y
+            distance = math.sqrt(dx * dx + dy * dy)
+            if distance < self.ship.size + asteroid.size:
+                self.game_over = True
+                return
+
+            # Check collision with bullets
+            for bullet in self.bullets[:]:
+                dx = bullet.x - asteroid.x
+                dy = bullet.y - asteroid.y
+                distance = math.sqrt(dx * dx + dy * dy)
+                if distance < bullet.size + asteroid.size:
+                    self.bullets.remove(bullet)
+                    self.asteroids.remove(asteroid)
+                    self.score += 100
+                    if asteroid.size > 20:
+                        for _ in range(2):
+                            new_asteroid = Asteroid(asteroid.x, asteroid.y, asteroid.size/2)
+                            self.asteroids.append(new_asteroid)
+                    break
+
+        if len(self.asteroids) < 5:
+            self.spawn_asteroid()
+
+    def shoot(self):
+        if not self.game_over and len(self.bullets) < 5:
+            self.bullets.append(Bullet(self.ship.x, self.ship.y, self.ship.rotation))
+
+game = Game()
+
+def update():
+    game.update()
+    return json.dumps({
+        'ship': {'x': game.ship.x, 'y': game.ship.y, 'rotation': game.ship.rotation},
+        'bullets': [{'x': b.x, 'y': b.y} for b in game.bullets],
+        'asteroids': [{'x': a.x, 'y': a.y, 'size': a.size} for a in game.asteroids],
+        'score': game.score,
+        'gameOver': game.game_over
+    })
+
+def handle_input(action):
+    if action == 'left':
+        game.ship.rotate(1)
+    elif action == 'right':
+        game.ship.rotate(-1)
+    elif action == 'thrust':
+        game.ship.thrust(True)
+    elif action == 'shoot':
+        game.shoot()
+    elif action == 'stop_thrust':
+        game.ship.thrust(False)
+            `;
+            await pyodide.runPythonAsync(pythonCode);
+            return pyodide;
+        }
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let pyodide;
+        let gameLoop;
+        const keys = {};
+
+        async function init() {
+            pyodide = await initPyodide();
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function drawShip(x, y, rotation) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(-rotation * Math.PI / 180);
+            ctx.beginPath();
+            ctx.moveTo(20, 0);
+            ctx.lineTo(-10, -10);
+            ctx.lineTo(-10, 10);
+            ctx.closePath();
+            ctx.strokeStyle = '#0ff';
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawBullet(x, y) {
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#0ff';
+            ctx.fill();
+        }
+
+        function drawAsteroid(x, y, size) {
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.strokeStyle = '#0ff';
+            ctx.stroke();
+        }
+
+        function update() {
+            const gameState = JSON.parse(pyodide.runPython('update()'));
+            
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawShip(gameState.ship.x, gameState.ship.y, gameState.ship.rotation);
+            
+            gameState.bullets.forEach(bullet => {
+                drawBullet(bullet.x, bullet.y);
+            });
+
+            gameState.asteroids.forEach(asteroid => {
+                drawAsteroid(asteroid.x, asteroid.y, asteroid.size);
+            });
+
+            document.getElementById('score').textContent = gameState.score;
+
+            if (gameState.gameOver) {
+                cancelAnimationFrame(gameLoop);
+                ctx.fillStyle = '#0ff';
+                ctx.font = '48px Orbitron';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
+                document.getElementById('startBtn').style.display = 'block';
+                return;
+            }
+
+            if (keys['ArrowLeft']) pyodide.runPython('handle_input("left")');
+            if (keys['ArrowRight']) pyodide.runPython('handle_input("right")');
+            if (keys['ArrowUp']) pyodide.runPython('handle_input("thrust")');
+            else pyodide.runPython('handle_input("stop_thrust")');
+            if (keys[' ']) pyodide.runPython('handle_input("shoot")');
+
+            gameLoop = requestAnimationFrame(update);
+        }
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+            pyodide.runPython('game = Game()');
+            document.getElementById('startBtn').style.display = 'none';
+            gameLoop = requestAnimationFrame(update);
+        });
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ') e.preventDefault();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        init();
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
